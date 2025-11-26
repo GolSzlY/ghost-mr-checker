@@ -1,14 +1,14 @@
 # Ghost MR Checker
 
-A GitLab tool to detect "ghost" merge requests - MRs that were merged into the `release` branch but are missing from the `master` branch.
+A GitLab tool to detect "ghost" merge requests - MRs that were merged into branches but whose commits are actually missing from those branches.
 
 ## Overview
 
-This tool helps identify merge requests that have been merged into your `release` branch but haven't been properly merged into `master`. It checks the actual commit history to detect true ghost commits, accounting for squash merges and other merge strategies.
+This tool helps identify merge requests that appear as "merged" in GitLab but whose commits are actually missing from the target branches. It checks both `release` and `master` branches to detect true ghost commits, accounting for squash merges and other merge strategies.
 
 ## Features
 
-- ✅ Detects MRs merged to `release` but missing from `master`
+- ✅ Detects ghost MRs in both `release` and `master` branches
 - ✅ Handles squash merges by checking commit titles/messages
 - ✅ Configurable date range for checking
 - ✅ YAML-based configuration
@@ -97,24 +97,20 @@ This will use the default `config.yaml` file in the current directory.
 
 ## How It Works
 
-1. **Fetch Release MRs**: Queries GitLab API for MRs merged into `release` after the specified date
-2. **Get Release Branch History**: Fetches the complete commit history of the `release` branch
-3. **Match Commits**: For each MR, checks if its commits exist in the release branch by:
+1. **Fetch Branch MRs**: Queries GitLab API for MRs merged into both `release` and `master` branches after the specified date
+2. **Get Branch History**: Fetches the complete commit history of both branches
+3. **Match Commits**: For each MR, checks if its commits actually exist in the target branch by:
    - Matching commit SHAs (for regular merges)
    - Matching commit titles/messages (for squash merges)
-4. **Check Master Status**: For MRs found in release, checks if they exist in `master`
-5. **Report Status**:
-   - **[MISSING]**: MR merged to release but no corresponding MR to master exists
-   - **[OPEN]**: MR to master exists but is still open
-   - **[CLOSED]**: MR to master exists but was closed without merging
-   - **[MERGED]**: MR properly merged to master (not shown in output)
+4. **Report Ghost Status**:
+   - **[GHOST]**: MR marked as merged in GitLab but commits are missing from the target branch
 
 ## Example Output
 
 ```
-[MISSING] Fix critical bug in payment processing (Source: bugfix/payment-issue)
-[OPEN] Add new feature for user profiles (Source: feature/user-profiles)
-[CLOSED] Update dependencies (Source: chore/deps-update)
+[GHOST] Fix critical bug in payment processing (Branch: release, Source: bugfix/payment-issue)
+[GHOST] Add new feature for user profiles (Branch: master, Source: feature/user-profiles)
+[GHOST] Update dependencies (Branch: release, Source: chore/deps-update)
 ```
 
 ## Development

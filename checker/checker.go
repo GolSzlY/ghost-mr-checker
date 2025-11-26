@@ -23,6 +23,7 @@ type MRResult struct {
 	ReleaseMR *gitlab.MergeRequest
 	MasterMR  *gitlab.MergeRequest
 	Status    MRStatus
+	Branch    string // "release" or "master"
 }
 
 // GitlabClientInterface defines the subset of GitLab client methods we need
@@ -41,6 +42,7 @@ type Checker struct {
 	MR             MergeRequestsService
 	ProjectID      string
 	releaseCommits []*gitlab.Commit
+	masterCommits  []*gitlab.Commit
 }
 
 // NewChecker creates a new Checker instance
@@ -54,20 +56,41 @@ func NewChecker(commits CommitsService, mr MergeRequestsService, projectID strin
 
 // Check compares MRs between release and master branches
 func (c *Checker) Check(since time.Time) ([]MRResult, error) {
-	// 0. Pre-load release commits for squash merge detection
+	// 0. Pre-load commits for both branches for squash merge detection
 	if err := c.loadReleaseCommits(since); err != nil {
+		return nil, err
+	}
+	if err := c.loadMasterCommits(since); err != nil {
 		return nil, err
 	}
 
 	var allResults []MRResult
 
-	// 1. Fetch MRs merged into release since the date
-	targetRelease := "release"
+	// 1. Check release branch
+	releaseResults, err := c.checkBranch("release", since)
+	if err != nil {
+		return nil, err
+	}
+	allResults = append(allResults, releaseResults...)
+
+	// 2. Check master branch
+	masterResults, err := c.checkBranch("master", since)
+	if err != nil {
+		return nil, err
+	}
+	allResults = append(allResults, masterResults...)
+
+	return allResults, nil
+}
+
+// checkBranch checks for ghost MRs in a specific branch
+func (c *Checker) checkBranch(branchName string, since time.Time) ([]MRResult, error) {
+	var results []MRResult
 	stateMerged := "merged"
 	scope := "all"
 
 	opt := &gitlab.ListProjectMergeRequestsOptions{
-		TargetBranch: &targetRelease,
+		TargetBranch: &branchName,
 		State:        &stateMerged,
 		Scope:        &scope,
 		UpdatedAfter: &since,
@@ -89,15 +112,15 @@ func (c *Checker) Check(since time.Time) ([]MRResult, error) {
 				continue
 			}
 
-			// Check if code is actually in release (Ghost detection)
-			// We check both SHA (fast) and Title (slow/squash)
-			isMerged := c.isMergedToBranch(mr)
+			// Check if code is actually in the branch (Ghost detection)
+			isMerged := c.isMergedToBranch(mr, branchName)
 
 			if !isMerged {
 				// It's a Ghost! (Merged in GitLab, but not in branch)
-				allResults = append(allResults, MRResult{
+				results = append(results, MRResult{
 					ReleaseMR: mr,
 					Status:    StatusGhost,
+					Branch:    branchName,
 				})
 			}
 		}
@@ -108,13 +131,20 @@ func (c *Checker) Check(since time.Time) ([]MRResult, error) {
 		opt.Page = resp.NextPage
 	}
 
-	return allResults, nil
+	return results, nil
 }
 
 func (c *Checker) loadReleaseCommits(since time.Time) error {
-	refName := "release"
+	return c.loadCommitsForBranch("release", since, &c.releaseCommits)
+}
+
+func (c *Checker) loadMasterCommits(since time.Time) error {
+	return c.loadCommitsForBranch("master", since, &c.masterCommits)
+}
+
+func (c *Checker) loadCommitsForBranch(branchName string, since time.Time, commits *[]*gitlab.Commit) error {
 	opt := &gitlab.ListCommitsOptions{
-		RefName: &refName,
+		RefName: &branchName,
 		Since:   &since,
 		ListOptions: gitlab.ListOptions{
 			PerPage: 100,
@@ -123,11 +153,11 @@ func (c *Checker) loadReleaseCommits(since time.Time) error {
 	}
 
 	for {
-		commits, resp, err := c.Commits.ListCommits(c.ProjectID, opt)
+		branchCommits, resp, err := c.Commits.ListCommits(c.ProjectID, opt)
 		if err != nil {
 			return err
 		}
-		c.releaseCommits = append(c.releaseCommits, commits...)
+		*commits = append(*commits, branchCommits...)
 
 		if resp.NextPage == 0 {
 			break
@@ -137,10 +167,21 @@ func (c *Checker) loadReleaseCommits(since time.Time) error {
 	return nil
 }
 
-func (c *Checker) isMergedToBranch(mr *gitlab.MergeRequest) bool {
+func (c *Checker) isMergedToBranch(mr *gitlab.MergeRequest, branchName string) bool {
+	var commits []*gitlab.Commit
+
+	// Select the appropriate commit cache based on branch
+	switch branchName {
+	case "release":
+		commits = c.releaseCommits
+	case "master":
+		commits = c.masterCommits
+	default:
+		return false
+	}
+
 	// 1. Check SHA (Fast path for non-squash merges)
-	// We can iterate our cached commits instead of calling API again
-	for _, commit := range c.releaseCommits {
+	for _, commit := range commits {
 		if commit.ID == mr.SHA {
 			return true
 		}
@@ -148,7 +189,7 @@ func (c *Checker) isMergedToBranch(mr *gitlab.MergeRequest) bool {
 
 	// 2. Check Title (Slow path for squash merges)
 	// GitLab default squash message usually contains the title
-	for _, commit := range c.releaseCommits {
+	for _, commit := range commits {
 		if containsTitle(commit.Title, mr.Title) || containsTitle(commit.Message, mr.Title) {
 			return true
 		}

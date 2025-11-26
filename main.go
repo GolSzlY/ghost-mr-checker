@@ -59,7 +59,7 @@ func main() {
 	}
 
 	for _, res := range results {
-		fmt.Printf("[%s] %s (Source: %s)\n", res.Status, res.ReleaseMR.Title, res.ReleaseMR.SourceBranch)
+		fmt.Printf("[%s] %s (Branch: %s, Source: %s)\n", res.Status, res.ReleaseMR.Title, res.Branch, res.ReleaseMR.SourceBranch)
 	}
 }
 
