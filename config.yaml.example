@@ -1,0 +1,6 @@
+gitlab:
+  token: "glpat-YOUR_GITLAB_ACCESS_TOKEN_HERE"
+  project_id: "YOUR_GITLAB_PROJECT_ID_HERE"
+  url: "https://YOUR_GITLAB_URL_HERE/api/v4"
+check:
+  since: "2025-11-09"
